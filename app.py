@@ -2,6 +2,7 @@ import numpy as np
 from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix
+from imblearn.under_sampling import RandomUnderSampler
 import seaborn as sns
 import matplotlib.pyplot as plt
 import os  
@@ -135,18 +136,27 @@ else:
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-print(f"Training samples: {len(X_train)}")
+print(f"Training samples: {len(X_train)} (Seizures: {np.sum(y_train)})")
 print(f"Testing samples: {len(X_test)}")
+
+
+# We'll create a 1:1 ratio (or as close as possible) of seizure to non-seizure
+# Other good ratios to try are 0.5 (1 seizure per 2 non-seizure) or 0.25
+rus = RandomUnderSampler(sampling_strategy=0.17, random_state=42)
+print("Resampling the training data...")
+X_train_resampled, y_train_resampled = rus.fit_resample(X_train, y_train)
+
+print(f"Resampled training samples: {len(X_train_resampled)} (Seizures: {np.sum(y_train_resampled)})")
+# --- END OF ADDITION ---
 
 # --- Train ---
 print("\nTraining the model...")
 model = RandomForestClassifier(
     n_estimators=100,
-    class_weight="balanced",
     random_state=42,
     n_jobs=-1 # Use all available CPU cores
 )
-model.fit(X_train, y_train)
+model.fit(X_train_resampled, y_train_resampled)
 
 # --- Evaluate ---
 print("Making predictions on the test data...")
