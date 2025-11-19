@@ -3,6 +3,8 @@ from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix
 from imblearn.under_sampling import RandomUnderSampler
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline
 import seaborn as sns
 import matplotlib.pyplot as plt
 import os  
@@ -140,11 +142,18 @@ print(f"Training samples: {len(X_train)} (Seizures: {np.sum(y_train)})")
 print(f"Testing samples: {len(X_test)}")
 
 
-# We'll create a 1:1 ratio (or as close as possible) of seizure to non-seizure
-# Other good ratios to try are 0.5 (1 seizure per 2 non-seizure) or 0.25
-rus = RandomUnderSampler(sampling_strategy=0.17, random_state=42)
-print("Resampling the training data...")
-X_train_resampled, y_train_resampled = rus.fit_resample(X_train, y_train)
+# 1. SMOTE: Create synthetic seizures to increase their count to 10% of non-seizures
+over = SMOTE(sampling_strategy=0.1, random_state=42) 
+
+# 2. UnderSample: Reduce non-seizures to be 100% (ratio 1) of the NEW seizure count
+under = RandomUnderSampler(sampling_strategy=1, random_state=42)
+
+# Pipeline applies them in order
+steps = [('o', over), ('u', under)]
+pipeline = Pipeline(steps=steps)
+
+print("Resampling with SMOTE + UnderSampling...")
+X_train_resampled, y_train_resampled = pipeline.fit_resample(X_train, y_train)
 
 print(f"Resampled training samples: {len(X_train_resampled)} (Seizures: {np.sum(y_train_resampled)})")
 # --- END OF ADDITION ---
