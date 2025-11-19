@@ -83,8 +83,30 @@ def process_edf_file(edf_path, seizure_intervals):
             topological_features_list.append(epoch_conn_features)
         topological_features = np.array(topological_features_list)
         
+        # --- Part B.5: Time-Domain Features (NEW) ---
+        # Get data: (n_epochs, n_channels, n_samples)
+        all_epoch_data = epochs.get_data() 
+        
+        # 1. Line Length: Excellent for detecting high-frequency/high-amplitude seizures
+        # It measures the total vertical distance traveled by the signal
+        # Shape: (n_epochs, n_channels)
+        line_length = np.sum(np.abs(np.diff(all_epoch_data, axis=2)), axis=2)
+        
+        # 2. Variance: Measures the "power" or spread of the signal
+        # Shape: (n_epochs, n_channels)
+        variance = np.var(all_epoch_data, axis=2)
+        
+        # Flatten these features so they can be stacked
+        # We don't need to flatten them explicitly if we append them to the list, 
+        # but to stack with 'all_features', they need to be 2D arrays.
+        # Since they are already (n_epochs, n_channels), they are ready to stack!
+
+        # --- Part C: Combine All Features ---
+        # Stack everything side-by-side
+        all_features = np.hstack((spectral_features, topological_features, line_length, variance))
+        
         # Part C: Combine
-        all_features = np.hstack((spectral_features, topological_features))
+        # all_features = np.hstack((spectral_features, topological_features))
 
         # --- Step 4: Labeling ---
         # (This is your exact code from Step 4B and 4C)

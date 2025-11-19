@@ -143,7 +143,7 @@ print(f"Testing samples: {len(X_test)}")
 
 
 # 1. SMOTE: Create synthetic seizures to increase their count to 10% of non-seizures
-over = SMOTE(sampling_strategy=0.1, random_state=42) 
+over = SMOTE(sampling_strategy=0.2, random_state=42) 
 
 # 2. UnderSample: Reduce non-seizures to be 100% (ratio 1) of the NEW seizure count
 under = RandomUnderSampler(sampling_strategy=1, random_state=42)
