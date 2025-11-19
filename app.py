@@ -117,78 +117,95 @@ print(f"Total labels shape (y): {y.shape}")
 print(f"Total seizures found (label 1): {np.sum(y)}")
 
 ########################################################
-############ Step 5 & 6: Train and Evaluate ############
+############ Step 5 & 6: Train, Validate, Save #########
 ########################################################
 
-# --- The RIGHT Way to Split: By Patient ---
-logo = LeaveOneGroupOut()
+import time
+import joblib  # For saving the model
+from xgboost import XGBClassifier
+from sklearn.metrics import classification_report, confusion_matrix, recall_score, precision_score
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import RandomUnderSampler
+from imblearn.pipeline import Pipeline
+from scipy.signal import medfilt
 
-# Check if we have more than one patient, otherwise split
-if len(np.unique(groups)) > 1:
-    train_indices, test_indices = next(logo.split(X, y, groups))
-    X_train, X_test = X[train_indices], X[test_indices]
-    y_train, y_test = y[train_indices], y[test_indices]
+# --- CONFIGURATION FROM EXPERIMENT 19 ---
+# This is the "winning" configuration
+smote_ratio = 0.025
+rus_ratio = 1.0
+filter_kernel = 5
+
+# Define the pipeline structure (used for both Validation and Final Training)
+def get_pipeline():
+    steps = [
+        ('smote', SMOTE(sampling_strategy=smote_ratio, random_state=42)),
+        ('rus', RandomUnderSampler(sampling_strategy=rus_ratio, random_state=42)),
+        ('model', RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1))
+    ]
+    return Pipeline(steps=steps)
+
+
+# ======================================================
+# PART 1: Validate on ALL Patients (Cross-Validation)
+# ======================================================
+# This proves the model works on everyone, not just Patient 1.
+
+logo = LeaveOneGroupOut()
+n_splits = logo.get_n_splits(X, y, groups)
+unique_patients = np.unique(groups)
+
+print(f"\nStarting Cross-Validation on {n_splits} patients...")
+print(f"Configuration: SMOTE={smote_ratio}, RUS={rus_ratio}, MedianFilter={filter_kernel}")
+
+all_true_labels = []
+all_predictions = []
+
+for i, (train_indices, test_indices) in enumerate(logo.split(X, y, groups)):
     test_patient = groups[test_indices][0]
     
-    print(f"\nSplitting data. Testing on Patient {test_patient}.")
-else:
-    # Fallback for testing with only one patient's data
-    print("\nWarning: Only one patient group found. Splitting randomly (not for valid results).")
-    from sklearn.model_selection import train_test_split
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+    # 1. Split
+    X_train, X_test = X[train_indices], X[test_indices]
+    y_train, y_test = y[train_indices], y[test_indices]
 
-print(f"Training samples: {len(X_train)} (Seizures: {np.sum(y_train)})")
-print(f"Testing samples: {len(X_test)}")
+    # 2. Train Pipeline (SMOTE -> RUS -> Model)
+    pipeline = get_pipeline()
+    pipeline.fit(X_train, y_train)
+    
+    # 3. Predict
+    raw_predictions = pipeline.predict(X_test)
+    
+    # 4. Post-Processing (The "Logic" Fix)
+    final_predictions = medfilt(raw_predictions, kernel_size=filter_kernel)
+    
+    # 5. Store Results
+    all_true_labels.extend(y_test)
+    all_predictions.extend(final_predictions)
+    
+    # Optional: Print individual patient progress
+    recall = recall_score(y_test, final_predictions, zero_division=0)
+    precision = precision_score(y_test, final_predictions, zero_division=0)
+    print(f"Patient {test_patient}: Recall={recall:.2f}, Precision={precision:.2f}")
+
+# --- Final Validation Report ---
+print("\n--- Final Validation Report (Average across all patients) ---")
+print(classification_report(all_true_labels, all_predictions, target_names=["Non-Seizure", "Seizure"]))
 
 
-# 1. SMOTE: Create synthetic seizures to increase their count to 10% of non-seizures
-over = SMOTE(sampling_strategy=0.025, random_state=42) 
+# ======================================================
+# PART 2: Train & Save "Master Model"
+# ======================================================
+# Now that we trust the config, we train on EVERYONE to make the best possible model.
 
-# 2. UnderSample: Reduce non-seizures to be 100% (ratio 1) of the NEW seizure count
-under = RandomUnderSampler(sampling_strategy=1, random_state=42)
+print("\nTraining Master Model on ALL data...")
 
-# Pipeline applies them in order
-steps = [('o', over), ('u', under)]
-pipeline = Pipeline(steps=steps)
+# 1. Create the full pipeline
+final_pipeline = get_pipeline()
 
-print("Resampling with SMOTE + UnderSampling...")
-X_train_resampled, y_train_resampled = pipeline.fit_resample(X_train, y_train)
+# 2. Train on 100% of the data (X, y)
+final_pipeline.fit(X, y)
 
-print(f"Resampled training samples: {len(X_train_resampled)} (Seizures: {np.sum(y_train_resampled)})")
-# --- END OF ADDITION ---
+# 3. Save the model
+model_filename = "seizure_detection_model.joblib"
+joblib.dump(final_pipeline, model_filename)
 
-# --- Train ---
-print("\nTraining the model...")
-model = RandomForestClassifier(
-    n_estimators=100,
-    random_state=42,
-    n_jobs=-1 # Use all available CPU cores
-)
-model.fit(X_train_resampled, y_train_resampled)
-
-# --- Evaluate ---
-print("Making predictions on the test data...")
-raw_predictions = model.predict(X_test)
-
-# Apply a Median Filter (Window size 5)
-# This looks at 5 neighbors and picks the majority vote.
-# It removes isolated 1s and fills in small gaps of 0s.
-predictions = medfilt(raw_predictions, kernel_size=5)
-
-print("\n--- Classification Report ---")
-report = classification_report(y_test, predictions, target_names=["Non-Seizure (0)", "Seizure (1)"], zero_division=0)
-print(report)
-
-print("\n--- Confusion Matrix ---")
-cm = confusion_matrix(y_test, predictions)
-print(cm)
-
-# You can use this to create a heatmap visualization
-plt.figure(figsize=(6,4))
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-            xticklabels=['Predicted Non-Seizure', 'Predicted Seizure'], 
-            yticklabels=['Actual Non-Seizure', 'Actual Seizure'])
-plt.title('Confusion Matrix')
-plt.show()
+print(f"Success! Model saved to {model_filename}")
