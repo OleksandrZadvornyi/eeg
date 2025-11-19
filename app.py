@@ -11,6 +11,7 @@ import os
 import glob
 import warnings
 import sys
+from scipy.signal import medfilt
 
 from utils.parse_summary_file import parse_summary_file 
 from utils.process_edf_file import process_edf_file
@@ -143,7 +144,7 @@ print(f"Testing samples: {len(X_test)}")
 
 
 # 1. SMOTE: Create synthetic seizures to increase their count to 10% of non-seizures
-over = SMOTE(sampling_strategy=0.2, random_state=42) 
+over = SMOTE(sampling_strategy=0.025, random_state=42) 
 
 # 2. UnderSample: Reduce non-seizures to be 100% (ratio 1) of the NEW seizure count
 under = RandomUnderSampler(sampling_strategy=1, random_state=42)
@@ -169,7 +170,12 @@ model.fit(X_train_resampled, y_train_resampled)
 
 # --- Evaluate ---
 print("Making predictions on the test data...")
-predictions = model.predict(X_test)
+raw_predictions = model.predict(X_test)
+
+# Apply a Median Filter (Window size 5)
+# This looks at 5 neighbors and picks the majority vote.
+# It removes isolated 1s and fills in small gaps of 0s.
+predictions = medfilt(raw_predictions, kernel_size=5)
 
 print("\n--- Classification Report ---")
 report = classification_report(y_test, predictions, target_names=["Non-Seizure (0)", "Seizure (1)"], zero_division=0)
