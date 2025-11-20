@@ -2,39 +2,75 @@ import mne
 import numpy as np
 import os
 
-# raw = mne.io.read_raw_edf("./PhysioNetData_aws/chb21/chb21_21.edf", preload=True, exclude=['--0', '--1', '--2', '--3', '--4'], verbose=False)
-# dummy_channels = [ch for ch in raw.ch_names if ch.startswith('-')]
-# if dummy_channels:
-#     print(f"Info for chb21_21.edf: Found and dropping {len(dummy_channels)} dummy channels.")
-#     raw.drop_channels(dummy_channels, on_missing='ignore')
-# print(len(raw.ch_names))
-
 def process_edf_file(edf_path, seizure_intervals):
     """
     Runs Steps 1-4 on a single .edf file.
-    
-    Returns a tuple: (all_features, labels) for this file.
+    Enforces a standard 18-channel montage with robust mapping.
     """
+    
+    # 1. Define the TARGET standard we want (International 10-20)
+    STANDARD_CHANNELS = [
+        'FP1-F7', 'F7-T7', 'T7-P7', 'P7-O1', 
+        'FP1-F3', 'F3-C3', 'C3-P3', 'P3-O1', 
+        'FP2-F4', 'F4-C4', 'C4-P4', 'P4-O2', 
+        'FP2-F8', 'F8-T8', 'T8-P8', 'P8-O2', 
+        'FZ-CZ', 'CZ-PZ'
+    ]
+
+    # 2. Define common aliases (Old Terminology -> New Terminology)
+    # CHB-MIT mixes these. T3=T7, T4=T8, T5=P7, T6=P8
+    CHANNEL_ALIAS = {
+        'T3': 'T7', 'T4': 'T8', 'T5': 'P7', 'T6': 'P8'
+    }
+
     try:
-        # --- Step 1 & 2: Load, Filter, Epoch ---
+        # --- Step 1: Load Data ---
         raw = mne.io.read_raw_edf(edf_path, preload=True, verbose=False)
         
-        # 1. Find all channel names that start with a dash
-        dummy_channels = [ch for ch in raw.ch_names if ch.startswith('-')]
+        # --- ROBUST CHANNEL NORMALIZATION ---
         
-        # 2. Drop them from the raw object
-        if dummy_channels:
-            print(f"Info for {os.path.basename(edf_path)}: Found and dropping {len(dummy_channels)} dummy channels.")
-            raw.drop_channels(dummy_channels, on_missing='ignore')
+        # A. Create a mapping of current names to clean standard names
+        #    Example: "T7-P7-1" -> "T7-P7"
+        #    Example: "Fp1-F7"  -> "FP1-F7"
+        rename_map = {}
+        current_chans = raw.ch_names
         
-        # Now, AFTER dropping dummies, we check if exactly 23 EEG channels remain.
-        # This is the correct way to standardize our data.
-        if len(raw.ch_names) != 23:
-            print(f"Skipping {os.path.basename(edf_path)}: Has {len(raw.ch_names)} non-dummy channels, not 23.")
+        for ch in current_chans:
+            # Normalize: Upper case, remove spaces
+            clean_name = ch.upper().strip()
+            
+            # Remove common suffixes like "-0", "-REF", etc.
+            clean_name = clean_name.replace('-0', '').replace('-REF', '').replace('-Ref', '')
+            
+            # Apply 10-20 aliases (e.g., replace T3 with T7)
+            for old, new in CHANNEL_ALIAS.items():
+                clean_name = clean_name.replace(old, new)
+            
+            # If the cleaned name is in our standard list, map it!
+            if clean_name in STANDARD_CHANNELS:
+                rename_map[ch] = clean_name
+
+        # B. Apply the renaming
+        if rename_map:
+            raw.rename_channels(rename_map)
+
+        # C. Check for missing channels
+        # Now that we've renamed everything possible, do we have the 18 we need?
+        present_channels = raw.ch_names
+        missing_chans = [ch for ch in STANDARD_CHANNELS if ch not in present_channels]
+        
+        if len(missing_chans) > 0:
+            # PRINT THE WARNING so we know why it failed
+            # print(f"Skipping {os.path.basename(edf_path)}: Missing {missing_chans}") 
             return None, None
+
+        # D. Pick and Reorder
+        # This keeps strictly the 18 channels in the correct order
+        raw.pick_channels(STANDARD_CHANNELS)
         
         print(f"Processing {os.path.basename(edf_path)} (Seizures: {len(seizure_intervals)})...")
-                
+
+        # --- Step 2: Filter and Epoch ---
         raw.filter(l_freq=0.5, h_freq=50, verbose=False)
         
         epoch_duration = 5
@@ -46,11 +82,9 @@ def process_edf_file(edf_path, seizure_intervals):
         )
         
         if len(epochs) == 0:
-            print(f"Skipping {os.path.basename(edf_path)}: No epochs created.")
             return None, None
 
         # --- Step 3: Feature Extraction ---
-        # (This is your exact code from Step 3A and 3B)
         
         # Part A: Spectral
         sfreq = epochs.info['sfreq']
@@ -82,34 +116,15 @@ def process_edf_file(edf_path, seizure_intervals):
             epoch_conn_features = corr_matrix[triu_indices]
             topological_features_list.append(epoch_conn_features)
         topological_features = np.array(topological_features_list)
-        
-        # --- Part B.5: Time-Domain Features (NEW) ---
-        # Get data: (n_epochs, n_channels, n_samples)
-        all_epoch_data = epochs.get_data() 
-        
-        # 1. Line Length: Excellent for detecting high-frequency/high-amplitude seizures
-        # It measures the total vertical distance traveled by the signal
-        # Shape: (n_epochs, n_channels)
+
+        # Part B.5: Time-Domain
         line_length = np.sum(np.abs(np.diff(all_epoch_data, axis=2)), axis=2)
-        
-        # 2. Variance: Measures the "power" or spread of the signal
-        # Shape: (n_epochs, n_channels)
         variance = np.var(all_epoch_data, axis=2)
         
-        # Flatten these features so they can be stacked
-        # We don't need to flatten them explicitly if we append them to the list, 
-        # but to stack with 'all_features', they need to be 2D arrays.
-        # Since they are already (n_epochs, n_channels), they are ready to stack!
-
-        # --- Part C: Combine All Features ---
-        # Stack everything side-by-side
-        all_features = np.hstack((spectral_features, topological_features, line_length, variance))
-        
         # Part C: Combine
-        # all_features = np.hstack((spectral_features, topological_features))
+        all_features = np.hstack((spectral_features, topological_features, line_length, variance))
 
         # --- Step 4: Labeling ---
-        # (This is your exact code from Step 4B and 4C)
         labels = np.zeros(n_epochs, dtype=int)
         epoch_start_times = epochs.events[:, 0] / epochs.info['sfreq']
 

@@ -1,16 +1,15 @@
 import numpy as np
 from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, recall_score, precision_score
 from imblearn.under_sampling import RandomUnderSampler
-from imblearn.over_sampling import SMOTE
+from imblearn.over_sampling import SMOTE, RandomOverSampler
 from imblearn.pipeline import Pipeline
-import seaborn as sns
-import matplotlib.pyplot as plt
 import os  
 import glob
 import warnings
 import sys
+import joblib 
 from scipy.signal import medfilt
 
 from utils.parse_summary_file import parse_summary_file 
@@ -34,7 +33,7 @@ warnings.filterwarnings(
 ########################################################
 
 # Define the root directory of your CHB-MIT dataset
-SAVED_DATA_FILE = "chb_features.npz"
+SAVED_DATA_FILE = "chb_features1.npz"
 DATA_DIR = "./PhysioNetData_aws/"
 
 # --- NEW: LOAD-OR-PROCESS LOGIC ---
@@ -120,14 +119,6 @@ print(f"Total seizures found (label 1): {np.sum(y)}")
 ############ Step 5 & 6: Train, Validate, Save #########
 ########################################################
 
-import time
-import joblib  # For saving the model
-from xgboost import XGBClassifier
-from sklearn.metrics import classification_report, confusion_matrix, recall_score, precision_score
-from imblearn.over_sampling import SMOTE
-from imblearn.under_sampling import RandomUnderSampler
-from imblearn.pipeline import Pipeline
-from scipy.signal import medfilt
 
 # --- CONFIGURATION FROM EXPERIMENT 19 ---
 # This is the "winning" configuration
@@ -136,12 +127,27 @@ rus_ratio = 1.0
 filter_kernel = 5
 
 # Define the pipeline structure (used for both Validation and Final Training)
-def get_pipeline():
-    steps = [
-        ('smote', SMOTE(sampling_strategy=smote_ratio, random_state=42)),
-        ('rus', RandomUnderSampler(sampling_strategy=rus_ratio, random_state=42)),
-        ('model', RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1))
-    ]
+def get_pipeline(y_train_data=None):
+    # 1. Check how many seizures we actually have in this training set
+    n_seizures = np.sum(y_train_data == 1)
+    
+    # 2. Determine Safe Neighbors
+    # We need at least 1 neighbor, so k must be < n_seizures
+    k_neighbors = min(5, n_seizures - 1)
+    
+    # 3. Define Steps
+    steps = []
+    
+    if k_neighbors > 0:
+        # Use SMOTE if we have enough data
+        steps.append(('smote', SMOTE(sampling_strategy=smote_ratio, k_neighbors=k_neighbors, random_state=42)))
+    else:
+        # Fallback to simple duplication (RandomOverSampler) if data is tiny (< 2 seizures)
+        steps.append(('ros', RandomOverSampler(sampling_strategy=smote_ratio, random_state=42)))
+
+    steps.append(('rus', RandomUnderSampler(sampling_strategy=rus_ratio, random_state=42)))
+    steps.append(('model', RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)))
+
     return Pipeline(steps=steps)
 
 
@@ -168,7 +174,7 @@ for i, (train_indices, test_indices) in enumerate(logo.split(X, y, groups)):
     y_train, y_test = y[train_indices], y[test_indices]
 
     # 2. Train Pipeline (SMOTE -> RUS -> Model)
-    pipeline = get_pipeline()
+    pipeline = get_pipeline(y_train)
     pipeline.fit(X_train, y_train)
     
     # 3. Predict
@@ -199,7 +205,7 @@ print(classification_report(all_true_labels, all_predictions, target_names=["Non
 print("\nTraining Master Model on ALL data...")
 
 # 1. Create the full pipeline
-final_pipeline = get_pipeline()
+final_pipeline = get_pipeline(y)
 
 # 2. Train on 100% of the data (X, y)
 final_pipeline.fit(X, y)
