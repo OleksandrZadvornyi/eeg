@@ -118,8 +118,18 @@ def process_edf_file(edf_path, seizure_intervals):
         topological_features = np.array(topological_features_list)
 
         # Part B.5: Time-Domain
-        line_length = np.sum(np.abs(np.diff(all_epoch_data, axis=2)), axis=2)
-        variance = np.var(all_epoch_data, axis=2)
+        # --- OPTIONAL: Z-Score Normalization per epoch ---
+        # This makes the signal unit-less and comparable across patients
+        # Subtract mean, divide by std dev for each channel in each epoch
+        means = np.mean(all_epoch_data, axis=2, keepdims=True)
+        stds = np.std(all_epoch_data, axis=2, keepdims=True)
+        # Avoid division by zero
+        stds[stds == 0] = 1 
+        normalized_data = (all_epoch_data - means) / stds
+        # ------------------------------------------------
+        
+        line_length = np.sum(np.abs(np.diff(normalized_data, axis=2)), axis=2)
+        variance = np.var(normalized_data, axis=2)
         
         # Part C: Combine
         all_features = np.hstack((spectral_features, topological_features, line_length, variance))

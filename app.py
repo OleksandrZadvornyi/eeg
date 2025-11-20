@@ -2,6 +2,7 @@ import numpy as np
 from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, recall_score, precision_score
+from sklearn.preprocessing import StandardScaler
 from imblearn.under_sampling import RandomUnderSampler
 from imblearn.over_sampling import SMOTE, RandomOverSampler
 from imblearn.pipeline import Pipeline
@@ -33,7 +34,7 @@ warnings.filterwarnings(
 ########################################################
 
 # Define the root directory of your CHB-MIT dataset
-SAVED_DATA_FILE = "chb_features1.npz"
+SAVED_DATA_FILE = "chb_features.npz"
 DATA_DIR = "./PhysioNetData_aws/"
 
 # --- NEW: LOAD-OR-PROCESS LOGIC ---
@@ -138,11 +139,13 @@ def get_pipeline(y_train_data=None):
     # 3. Define Steps
     steps = []
     
+    # This forces all features to have Mean=0 and Variance=1.
+    # This ensures Variance/LineLength don't overpower SMOTE.
+    steps.append(('scaler', StandardScaler()))
+    
     if k_neighbors > 0:
-        # Use SMOTE if we have enough data
         steps.append(('smote', SMOTE(sampling_strategy=smote_ratio, k_neighbors=k_neighbors, random_state=42)))
     else:
-        # Fallback to simple duplication (RandomOverSampler) if data is tiny (< 2 seizures)
         steps.append(('ros', RandomOverSampler(sampling_strategy=smote_ratio, random_state=42)))
 
     steps.append(('rus', RandomUnderSampler(sampling_strategy=rus_ratio, random_state=42)))
