@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seizure Detection AI</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+        .box { border: 2px dashed #ccc; padding: 2rem; text-align: center; margin-top: 2rem; }
+        .result { margin-top: 2rem; padding: 1rem; border-radius: 8px; }
+        .safe { background-color: #e6fffa; color: #047857; border: 1px solid #047857; }
+        .danger { background-color: #fff5f5; color: #c53030; border: 1px solid #c53030; }
+        ul { text-align: left; margin-top: 1rem; }
+    </style>
+</head>
+<body>
+    <h1>🧠 EEG Seizure Detection</h1>
+    <p>Upload a standard .edf file to analyze using the Random Forest model.</p>
+
+    <div class="box">
+        <form method="post" enctype="multipart/form-data">
+            <input type="file" name="file" accept=".edf" required>
+            <br><br>
+            <button type="submit" style="padding: 10px 20px; cursor: pointer;">Analyze File</button>
+        </form>
+    </div>
+
+    {% if error %}
+        <div class="result danger">
+            <h3>Error</h3>
+            <p>{{ error }}</p>
+        </div>
+    {% endif %}
+
+    {% if status %}
+        <div class="result {% if status == 'Normal EEG' %}safe{% else %}danger{% endif %}">
+            <h2>Result: {{ status }}</h2>
+            {% if events %}
+                <p>Seizures detected at intervals:</p>
+                <ul>
+                    {% for event in events %}
+                        <li>{{ event }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        </div>
+    {% endif %}
+</body>
+</html>
