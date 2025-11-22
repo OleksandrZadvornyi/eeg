@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.model_selection import LeaveOneGroupOut
+from sklearn.feature_selection import VarianceThreshold
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, recall_score, precision_score
 from sklearn.preprocessing import StandardScaler
@@ -17,16 +18,16 @@ from utils.parse_summary_file import parse_summary_file
 from utils.process_edf_file import process_edf_file
 
 # Filter the specific RuntimeWarning
-warnings.filterwarnings(
-    "ignore", 
-    category=RuntimeWarning, 
-    message="Channel names are not unique, found duplicates for"
-)
-warnings.filterwarnings(
-    "ignore", 
-    category=RuntimeWarning, 
-    message="Scaling factor is not defined in following channels"
-)
+# warnings.filterwarnings(
+#     "ignore", 
+#     category=RuntimeWarning, 
+#     message="Channel names are not unique, found duplicates for"
+# )
+# warnings.filterwarnings(
+#     "ignore", 
+#     category=RuntimeWarning, 
+#     message="Scaling factor is not defined in following channels"
+# )
 
 
 ########################################################
@@ -116,6 +117,13 @@ print(f"\nTotal features shape (X): {X.shape}")
 print(f"Total labels shape (y): {y.shape}")
 print(f"Total seizures found (label 1): {np.sum(y)}")
 
+# Check for NaN (Not a Number)
+print(f"Is there NaN in data? {np.isnan(X).any()}")
+
+# Check for constant columns (where std = 0)
+std_devs = np.std(X, axis=0)
+print(f"Number of columns with zero variance: {np.sum(std_devs == 0)}")
+
 ########################################################
 ############ Step 5 & 6: Train, Validate, Save #########
 ########################################################
@@ -125,7 +133,7 @@ print(f"Total seizures found (label 1): {np.sum(y)}")
 # This is the "winning" configuration
 smote_ratio = 0.025
 rus_ratio = 1.0
-filter_kernel = 5
+filter_kernel = 3
 
 # Define the pipeline structure (used for both Validation and Final Training)
 def get_pipeline(y_train_data=None):
@@ -139,6 +147,7 @@ def get_pipeline(y_train_data=None):
     # 3. Define Steps
     steps = []
     
+    steps.append(('selector', VarianceThreshold(threshold=0)))
     # This forces all features to have Mean=0 and Variance=1.
     # This ensures Variance/LineLength don't overpower SMOTE.
     steps.append(('scaler', StandardScaler()))

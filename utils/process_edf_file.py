@@ -1,6 +1,43 @@
 import mne
 import numpy as np
 import os
+import gudhi as gd
+
+# Function from the paper (utils.py)
+def compute_persistence_diagram(point_cloud):
+    # Create Rips Complex
+    rips_complex = gd.RipsComplex(points=point_cloud, max_edge_length=1) 
+    simplex_tree = rips_complex.create_simplex_tree(max_dimension=2)
+    persistence_diagram = simplex_tree.persistence()
+
+    result = []
+    for dim, (birth, death) in persistence_diagram:
+        # 1. Drop infinite cycles (mandatory!)
+        if death == float('inf'):
+            continue
+            
+        # 2. (Optional, but recommended for EEG) Take only H1 (cycles/loops)
+        # H0 is just clustering of points. H1 is "holes" in the data.
+        # If you want both H0 and H1, comment out the next two lines.
+        if dim != 1:
+            continue
+            
+        result.append((dim, (birth, death)))
+        
+    return result
+
+def compute_landscape_values(diag, grid):
+    landscape_values = np.zeros_like(grid)
+    
+    for interval in diag:
+        dim, (birth, death) = interval
+        # Here we take only H1 (cycles) or H0 (connected components), depending on dim
+        # In the paper the code is simplified, but usually H1 is interesting for EEG
+        for i, t in enumerate(grid):
+            if birth < t < death:
+                landscape_values[i] = max(landscape_values[i], min(t - birth, death - t))
+                
+    return landscape_values
 
 def process_edf_file(edf_path, seizure_intervals):
     """
@@ -8,6 +45,8 @@ def process_edf_file(edf_path, seizure_intervals):
     Enforces a standard 18-channel montage with robust mapping.
     """
     
+    print(f"\nProcessing {os.path.basename(edf_path)} (Seizures: {len(seizure_intervals)})...")
+
     # 1. Define the TARGET standard we want (International 10-20)
     STANDARD_CHANNELS = [
         'FP1-F7', 'F7-T7', 'T7-P7', 'P7-O1', 
@@ -26,51 +65,40 @@ def process_edf_file(edf_path, seizure_intervals):
     try:
         # --- Step 1: Load Data ---
         raw = mne.io.read_raw_edf(edf_path, preload=True, verbose=False)
-        
+
         # --- ROBUST CHANNEL NORMALIZATION ---
-        
-        # A. Create a mapping of current names to clean standard names
-        #    Example: "T7-P7-1" -> "T7-P7"
-        #    Example: "Fp1-F7"  -> "FP1-F7"
+        print("Normalizing channel names...")
         rename_map = {}
         current_chans = raw.ch_names
         
         for ch in current_chans:
-            # Normalize: Upper case, remove spaces
             clean_name = ch.upper().strip()
-            
-            # Remove common suffixes like "-0", "-REF", etc.
             clean_name = clean_name.replace('-0', '').replace('-REF', '').replace('-Ref', '')
-            
-            # Apply 10-20 aliases (e.g., replace T3 with T7)
+
+            # Apply 10-20 aliases
             for old, new in CHANNEL_ALIAS.items():
                 clean_name = clean_name.replace(old, new)
-            
-            # If the cleaned name is in our standard list, map it!
+
             if clean_name in STANDARD_CHANNELS:
                 rename_map[ch] = clean_name
 
-        # B. Apply the renaming
+        # Apply renaming
         if rename_map:
             raw.rename_channels(rename_map)
 
-        # C. Check for missing channels
-        # Now that we've renamed everything possible, do we have the 18 we need?
+        # Check for missing channels
         present_channels = raw.ch_names
         missing_chans = [ch for ch in STANDARD_CHANNELS if ch not in present_channels]
         
         if len(missing_chans) > 0:
-            # PRINT THE WARNING so we know why it failed
-            # print(f"Skipping {os.path.basename(edf_path)}: Missing {missing_chans}") 
+            print(f"Missing required channels: {missing_chans}. Skipping file.")
             return None, None
 
-        # D. Pick and Reorder
-        # This keeps strictly the 18 channels in the correct order
+        # Pick and reorder channels
         raw.pick_channels(STANDARD_CHANNELS)
-        
-        print(f"Processing {os.path.basename(edf_path)} (Seizures: {len(seizure_intervals)})...")
 
         # --- Step 2: Filter and Epoch ---
+        print("Filtering data (0.5–50 Hz)...")
         raw.filter(l_freq=0.5, h_freq=50, verbose=False)
         
         epoch_duration = 5
@@ -82,18 +110,22 @@ def process_edf_file(edf_path, seizure_intervals):
         )
         
         if len(epochs) == 0:
+            print("No epochs extracted. Skipping file.")
             return None, None
 
         # --- Step 3: Feature Extraction ---
-        
-        # Part A: Spectral
+        print("Extracting spectral features...")
+
         sfreq = epochs.info['sfreq']
-        bands = {"delta": (0.5, 4), "theta": (4, 8), "alpha": (8, 13), 
-                 "beta": (13, 30), "gamma": (30, 50)}
+        bands = {
+            "delta": (0.5, 4), "theta": (4, 8),
+            "alpha": (8, 13), "beta": (13, 30), "gamma": (30, 50)
+        }
+
         psd = epochs.compute_psd(method="welch", n_fft=int(sfreq), fmin=0.5, fmax=50.0, verbose=False)
         psd_data = psd.get_data()
         freqs = psd.freqs
-        
+
         spectral_features = []
         for epoch_psd in psd_data:
             epoch_features = []
@@ -103,36 +135,43 @@ def process_edf_file(edf_path, seizure_intervals):
                 band_power_per_channel = np.mean(epoch_psd[:, idx], axis=1)
                 epoch_features.append(band_power_per_channel)
             spectral_features.append(np.concatenate(epoch_features))
+        
         spectral_features = np.array(spectral_features)
+        spectral_features = 10 * np.log10(spectral_features + 1e-20)
+        
+        # --- Topological Features ---
+        print("Extracting TDA features...")
+        
+        # Log transform PSD first to handle magnitudes
+        psd_log = 10 * np.log10(psd_data + 1e-20)
+        
+        # Min-Max Normalization per epoch to range [0, 1]
+        # This ensures the "shape" is captured independently of signal volume
+        p_min = psd_log.min(axis=(1,2), keepdims=True)
+        p_max = psd_log.max(axis=(1,2), keepdims=True)
+        psd_norm = (psd_log - p_min) / (p_max - p_min + 1e-10)
 
-        # Part B: Topological
+        # Grid must match the normalized range [0, 1]
+        grid = np.linspace(0, 1, 100)
+        tda_features_list = []
+
+        for epoch_idx in range(len(psd_data)):
+            # Form point cloud: each channel is a point in frequency space
+            point_cloud = psd_norm[epoch_idx]
+
+            diag = compute_persistence_diagram(point_cloud)
+            landscape = compute_landscape_values(diag, grid)
+
+            tda_features_list.append(landscape)
+
+        tda_features = np.array(tda_features_list)
+
         all_epoch_data = epochs.get_data() 
         n_epochs, n_channels, _ = all_epoch_data.shape
-        triu_indices = np.triu_indices(n_channels, k=1)
-        topological_features_list = []
-        for i in range(n_epochs):
-            epoch_data = all_epoch_data[i]
-            corr_matrix = np.corrcoef(epoch_data)
-            epoch_conn_features = corr_matrix[triu_indices]
-            topological_features_list.append(epoch_conn_features)
-        topological_features = np.array(topological_features_list)
+        line_length = np.sum(np.abs(np.diff(all_epoch_data, axis=2)), axis=2)
+        variance = np.var(all_epoch_data, axis=2)
 
-        # Part B.5: Time-Domain
-        # --- OPTIONAL: Z-Score Normalization per epoch ---
-        # This makes the signal unit-less and comparable across patients
-        # Subtract mean, divide by std dev for each channel in each epoch
-        means = np.mean(all_epoch_data, axis=2, keepdims=True)
-        stds = np.std(all_epoch_data, axis=2, keepdims=True)
-        # Avoid division by zero
-        stds[stds == 0] = 1 
-        normalized_data = (all_epoch_data - means) / stds
-        # ------------------------------------------------
-        
-        line_length = np.sum(np.abs(np.diff(normalized_data, axis=2)), axis=2)
-        variance = np.var(normalized_data, axis=2)
-        
-        # Part C: Combine
-        all_features = np.hstack((spectral_features, topological_features, line_length, variance))
+        all_features = np.hstack((spectral_features, tda_features, line_length, variance))
 
         # --- Step 4: Labeling ---
         labels = np.zeros(n_epochs, dtype=int)
@@ -141,13 +180,20 @@ def process_edf_file(edf_path, seizure_intervals):
         for i in range(n_epochs):
             epoch_start = epoch_start_times[i]
             epoch_end = epoch_start + epoch_duration
+
             for seizure_start, seizure_end in seizure_intervals:
                 if (epoch_start < seizure_end) and (epoch_end > seizure_start):
                     labels[i] = 1
                     break 
-                    
+
+        print("Labeling complete.")
+        print(f"Seizure epochs: {np.sum(labels)} / {len(labels)}")
+
         return all_features, labels
 
     except Exception as e:
         print(f"Error processing {os.path.basename(edf_path)}: {e}")
         return None, None
+
+# all_features, labels, tda_features = process_edf_file("../PhysioNetData_aws/chb24/chb24_06.edf",  [(1229, 1253)])
+# all_features, labels, tda_features = process_edf_file("../PhysioNetData_aws/chb12/chb12_11.edf",  [(1085, 1122)])
