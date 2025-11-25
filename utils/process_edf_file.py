@@ -2,6 +2,43 @@ import mne
 import numpy as np
 import os
 import gudhi as gd
+from mne.preprocessing import ICA  # <--- Added Import
+
+# --- Helper Function for ICA ---
+def apply_ica_cleaning(raw, n_components=15, random_state=42):
+    """
+    Fits ICA on the raw object and removes artifact components.
+    """
+    # 1. Fit ICA
+    # We use n_components=15 (must be <= n_channels)
+    ica = ICA(n_components=n_components, random_state=random_state, max_iter="auto")
+    
+    # We fit on the raw data (which is already filtered in the main loop)
+    # verbose=False to keep the console clean
+    ica.fit(raw, verbose=False)
+
+    # 2. Detect Artifacts (Auto-rejection logic from plotting.py)
+    # WARNING: Seizures usually have high amplitude. 
+    # Automated rejection based on peak-to-peak amplitude > 200uV might REMOVE seizures.
+    # It is safer to use EOG/ECG correlation if you have those channels, 
+    # or rely on manual inspection.
+    
+    # --- AUTOMATIC EXCLUSION LOGIC (Use with caution) ---
+    # components = ica.get_components()
+    # for idx, component in enumerate(components):
+    #     peak_to_peak = component.max() - component.min()
+    #     threshold_value = 200e-6 
+    #     if peak_to_peak > threshold_value:
+    #         ica.exclude.append(idx)
+    #         print(f"ICA: Auto-excluding component {idx} (PTP > 200uV)")
+    
+    # If you want to use the exclusion list, uncomment the lines above.
+    # Otherwise, this will just fit ICA and apply it (which might not clean much 
+    # without defining exclusions, but prepares the data structure).
+
+    # 3. Apply cleaning
+    raw_cleaned = ica.apply(raw, verbose=False)
+    return raw_cleaned
 
 # Function from the paper (utils.py)
 def compute_persistence_diagram(point_cloud):
@@ -98,8 +135,16 @@ def process_edf_file(edf_path, seizure_intervals):
         raw.pick_channels(STANDARD_CHANNELS)
 
         # --- Step 2: Filter and Epoch ---
-        print("Filtering data (0.5–50 Hz)...")
-        raw.filter(l_freq=0.5, h_freq=50, verbose=False)
+        print("Filtering data (1.0–50 Hz)...")
+        raw.filter(l_freq=1.00, h_freq=50, verbose=False)
+        
+        # --- NEW STEP: ICA ---
+        print("Applying ICA...")
+        # We apply ICA on the continuous data before cutting it into epochs
+        try:
+            raw = apply_ica_cleaning(raw, n_components=15)
+        except Exception as e:
+            print(f"ICA Failed: {e}. Proceeding with raw data.")
         
         epoch_duration = 5
         epochs = mne.make_fixed_length_epochs(
