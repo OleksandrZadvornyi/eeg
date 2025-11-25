@@ -16,8 +16,6 @@ st.set_page_config(
     page_icon="🧠",
     layout="wide"
 )
-import sys
-st.write(sys.executable)
 
 # try:
     
