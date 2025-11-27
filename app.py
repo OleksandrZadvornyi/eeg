@@ -38,7 +38,7 @@ from utils.process_edf_file import process_edf_file
 
 # Define the root directory of your CHB-MIT dataset
 SAVED_DATA_FILE = "chb_features_ica.npz"
-DATA_DIR = "./PhysioNetData_aws/"
+DATA_DIR = "./CHB-MIT_Scalp_EEG_Database/"
 
 # --- NEW: LOAD-OR-PROCESS LOGIC ---
 if os.path.exists(SAVED_DATA_FILE):
