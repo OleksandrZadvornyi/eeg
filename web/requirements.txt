@@ -7,3 +7,5 @@ mne
 gudhi
 scikit-learn
 joblib
+imblearn
+protobuf
