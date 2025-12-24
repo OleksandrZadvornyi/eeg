@@ -5,6 +5,8 @@ This repository implements a machine learning pipeline for the automated detecti
 
 The system includes a full training pipeline tested on the [CHB-MIT Scalp EEG Database](https://physionet.org/content/chbmit/1.0.0/#files) and a user-friendly [web interface](https://eeg-analyzer.streamlit.app/) for real-time analysis of EDF files.
 
+![Web App Interface](screenshot.png)
+
 ## 🚀 Key Features
 * **Advanced Preprocessing:** Standardization to the 10-20 channel system.
     * **Independent Component Analysis (ICA)** for artifact removal (EOG/EMG noise).
