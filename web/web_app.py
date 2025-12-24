@@ -9,29 +9,24 @@ import matplotlib.pyplot as plt
 from scipy.signal import medfilt, spectrogram
 import mne
 
-# Import the new Pipeline class
+# Internal pipeline imports
 try:
     from utils.eeg_processor import EEGPipeline, EEGConfig
 except ImportError:
-    # Fallback if file isn't renamed yet or in different folder
-    try:
-        from utils.eeg_processor import EEGPipeline, EEGConfig
-    except ImportError:
-        st.error("Critical Error: Could not import EEGPipeline.")
+    st.error("Critical Error: Could not import EEGPipeline dependencies.")
 
-# --- Privacy / Security Class ---
 class PrivacyManager:
     @staticmethod
     def anonymize_raw(raw):
-        """Removes sensitive metadata from MNE Raw objects."""
+        """Removes identifying subject metadata from the MNE object."""
         if raw.info['subject_info'] is not None:
             raw.info['subject_info'] = None
         return raw
 
-# --- Visualization Class ---
 class EEGVisualizer:
     @staticmethod
     def plot_timeline(probs, preds, threshold, epoch_duration=5):
+        """Generates a probability and detection timeline plot."""
         total_epochs = len(probs)
         time_axis = np.arange(total_epochs) * epoch_duration / 60 
         
@@ -49,6 +44,7 @@ class EEGVisualizer:
 
     @staticmethod
     def plot_raw_signal(raw, start_time, duration=10):
+        """Plots multi-channel EEG traces for a specific time window."""
         sfreq = raw.info['sfreq']
         start_sample = int(start_time * sfreq)
         stop_sample = int((start_time + duration) * sfreq)
@@ -57,7 +53,7 @@ class EEGVisualizer:
         times = np.arange(data.shape[1]) / sfreq + start_time
         
         fig, ax = plt.subplots(figsize=(12, 8))
-        offset_step = 0.0002  
+        offset_step = 0.0002  # Vertical separation between channels
         
         for i, ch_name in enumerate(raw.ch_names):
             offset = i * offset_step
@@ -72,6 +68,7 @@ class EEGVisualizer:
 
     @staticmethod
     def plot_spectrogram(data, sfreq, start_time):
+        """Generates a power spectral density heatmap."""
         fig, ax = plt.subplots(figsize=(10, 4))
         f, t, Sxx = spectrogram(data, fs=sfreq, nperseg=128, noverlap=64)
         img = ax.pcolormesh(t + start_time, f, 10 * np.log10(Sxx + 1e-10), shading='gouraud', cmap='inferno')
@@ -80,8 +77,8 @@ class EEGVisualizer:
         plt.colorbar(img, ax=ax, label='Power (dB)')
         return fig
 
-# --- Model Management Class ---
 class ModelHandler:
+    """Manages model loading and inference."""
     def __init__(self, model_path='seizure_model_final.pkl', config_path='model_config.json'):
         self.model = None
         self.config = {}
@@ -93,7 +90,7 @@ class ModelHandler:
             with open(config_path, 'r') as f:
                 self.config = json.load(f)
         except FileNotFoundError:
-            pass # Handle in UI
+            pass 
 
     def is_loaded(self):
         return self.model is not None
@@ -102,15 +99,15 @@ class ModelHandler:
         if not self.is_loaded(): return None
         return self.model.predict_proba(features)[:, 1]
 
-# --- Main Application Class ---
 class SeizureApp:
     def __init__(self):
         st.set_page_config(page_title="EEG Seizure Detector", page_icon="🧠", layout="wide")
-        self.pipeline = EEGPipeline() # Use our new OOP pipeline
+        self.pipeline = EEGPipeline() 
         self.model_handler = ModelHandler()
         self._init_session_state()
 
     def _init_session_state(self):
+        """Initializes Streamlit state variables to persist data across reruns."""
         if 'file_name' not in st.session_state: st.session_state.file_name = None
         if 'probs' not in st.session_state: st.session_state.probs = None
         if 'raw_viz' not in st.session_state: st.session_state.raw_viz = None
@@ -119,12 +116,13 @@ class SeizureApp:
     def render_sidebar(self):
         st.sidebar.header("Configuration")
         
-        if self.model_handler.is_loaded():
-            st.sidebar.success("Model Loaded")
-        else:
+        if not self.model_handler.is_loaded():
             st.sidebar.error("Model files not found.")
             st.stop()
 
+        st.sidebar.success("Model Loaded")
+        
+        # Hyperparameters for post-processing
         default_thresh = self.model_handler.config.get('best_threshold', 0.5)
         thresh = st.sidebar.slider("Sensitivity Threshold", 0.0, 1.0, default_thresh)
         
@@ -139,38 +137,35 @@ class SeizureApp:
         return thresh, kernel
 
     def process_file(self, uploaded_file):
-        # Only process if it's a new file
+        """Handles file upload, feature extraction, and prediction."""
         if st.session_state.file_name == uploaded_file.name:
             return
 
-        with st.spinner(f"Processing {uploaded_file.name}..."):
+        with st.spinner(f"Analyzing {uploaded_file.name}..."):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".edf") as tmp_file:
                 tmp_file.write(uploaded_file.getvalue())
                 tmp_path = tmp_file.name
 
             try:
-                # 1. Pipeline Feature Extraction
+                # Extract features and generate seizure probabilities
                 features, _ = self.pipeline.process(tmp_path, seizure_intervals=[])
                 if features is None:
                     st.error("Feature extraction failed.")
                     st.stop()
 
-                # 2. Prediction
                 probs = self.model_handler.predict(features)
 
-                # 3. Load Raw for Visualization (Lightweight version)
-                # We reuse the preprocessor logic but keep the object for plotting
+                # Prepare raw object for inspector visualization
                 raw_viz = self.pipeline.preprocessor.load_and_clean(tmp_path)
                 raw_viz = PrivacyManager.anonymize_raw(raw_viz)
 
-                # 4. Update State
                 st.session_state.probs = probs
                 st.session_state.raw_viz = raw_viz
                 st.session_state.file_name = uploaded_file.name
                 st.session_state.features_extracted = True
 
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Processing Error: {e}")
             finally:
                 if os.path.exists(tmp_path): os.remove(tmp_path)
 
@@ -181,7 +176,7 @@ class SeizureApp:
         probs = st.session_state.probs
         raw = st.session_state.raw_viz
         
-        # Post-processing
+        # Apply threshold and median filtering for temporal smoothing
         preds = medfilt((probs >= threshold).astype(int), kernel_size=kernel)
         n_seizures = np.sum(preds)
 
@@ -205,6 +200,7 @@ class SeizureApp:
             self._render_inspector(raw, preds, n_seizures)
 
     def _render_detection_table(self, preds, probs):
+        """Parses prediction blocks into a readable start/end list."""
         st.markdown("### Detections List")
         padded = np.pad(preds, (1, 1), 'constant')
         diffs = np.diff(padded)
@@ -215,19 +211,21 @@ class SeizureApp:
         for s, e in zip(starts, ends):
             detections.append({
                 "Start (s)": s*5, "End (s)": e*5, 
-                "Conf.": f"{np.mean(probs[s:e]):.2f}"
+                "Confidence": f"{np.mean(probs[s:e]):.2f}"
             })
         st.dataframe(pd.DataFrame(detections))
 
     def _render_inspector(self, raw, preds, n_seizures):
+        """Interactive tool to view raw signals and spectrograms."""
         max_time = int(len(preds) * 5)
+        # Default view to first seizure event if present
         default = int(np.where(preds == 1)[0][0] * 5) if n_seizures > 0 else 0
         
-        start_view = st.slider("View Time (s)", 0, max_time - 10, default)
+        start_view = st.slider("Jump to Time (s)", 0, max_time - 10, default)
         
         st.pyplot(EEGVisualizer.plot_raw_signal(raw, start_view))
         
-        spec_ch = st.selectbox("Spectrogram Channel", raw.ch_names)
+        spec_ch = st.selectbox("Select Spectrogram Channel", raw.ch_names)
         ch_idx = raw.ch_names.index(spec_ch)
         
         sfreq = raw.info['sfreq']
@@ -241,12 +239,11 @@ class SeizureApp:
         st.title("🧠 EEG Seizure Detection System")
         thresh, kernel = self.render_sidebar()
         
-        uploaded_file = st.file_uploader("Choose an EDF file...", type=['edf'])
+        uploaded_file = st.file_uploader("Upload EEG Record (.edf)", type=['edf'])
         if uploaded_file:
             self.process_file(uploaded_file)
             self.render_results(thresh, kernel)
 
-# --- Entry Point ---
 if __name__ == "__main__":
     app = SeizureApp()
     app.run()

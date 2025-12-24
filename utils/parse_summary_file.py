@@ -1,39 +1,37 @@
-# In parse_summary_file.py
 import re
 
 def parse_summary_file(summary_path):
     """
-    Parses a chbXX-summary.txt file.
+    Parses CHB-MIT summary text files to extract seizure timestamps.
     
-    Returns a dictionary where:
-    - keys are filenames (e.g., "chb01_03.edf")
-    - values are lists of (start, end) seizure tuples
+    Returns:
+        dict: {filename: [(start_1, end_1), (start_2, end_2), ...]}
     """
     seizure_dict = {}
     current_filename = ""
-    start_sec = None  # Temporary variable to hold the start time
+    start_sec = None
 
     try:
         with open(summary_path, 'r') as f:
             for line in f:
                 line = line.strip()
 
+                # Identify entry for a new EDF file
                 if line.startswith("File Name:"):
                     current_filename = line.split(":")[-1].strip()
-                    seizure_dict[current_filename] = [] # Initialize with no seizures
-                    start_sec = None # Reset on new file
+                    seizure_dict[current_filename] = []
+                    start_sec = None 
                 
-                # Use regex to find "Seizure X Start Time:" or "Seizure Start Time:"
+                # Extract seizure start timestamp
                 elif re.match(r"^Seizure \d* ?Start Time:", line):
                     start_sec = int(line.split(":")[-1].strip().split(" ")[0])
                 
-                # Use regex to find "Seizure X End Time:" or "Seizure End Time:"
+                # Extract seizure end timestamp and pair with start time
                 elif re.match(r"^Seizure \d* ?End Time:", line):
-                    # Make sure we have a start time to match
                     if start_sec is not None:
                         end_sec = int(line.split(":")[-1].strip().split(" ")[0])
                         seizure_dict[current_filename].append((start_sec, end_sec))
-                        start_sec = None # Reset for the next seizure
+                        start_sec = None 
     
     except Exception as e:
         print(f"Error parsing summary file {summary_path}: {e}")
