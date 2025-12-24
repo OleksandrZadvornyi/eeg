@@ -1,9 +1,9 @@
-# EEG Seizure Detection using Topological Data Analysis (TDA)
+# EEG Seizure Detection using Topological Data Analysis
 
 ## 📌 Overview
-This repository implements a machine learning pipeline for the automated detection of epileptic seizures from scalp EEG recordings. The core innovation of this project is the integration of **Topological Data Analysis (TDA)**—specifically Persistent Homology (H1 cycles)—alongside traditional spectral features to capture the shape and connectivity of neural signals.
+This repository implements a machine learning pipeline for the automated detection of epileptic seizures from scalp EEG recordings. The core innovation of this project is the integration of **Topological Data Analysis (TDA)**—specifically Persistent Homology (H1 cycles) - alongside traditional spectral features to capture the shape and connectivity of neural signals.
 
-The system includes a full training pipeline tested on the [CHB-MIT Scalp EEG Database](https://physionet.org/content/chbmit/1.0.0/#files) and a user-friendly web interface for real-time analysis of EDF files.
+The system includes a full training pipeline tested on the [CHB-MIT Scalp EEG Database](https://physionet.org/content/chbmit/1.0.0/#files) and a user-friendly [web interface](https://eeg-analyzer.streamlit.app/) for real-time analysis of EDF files.
 
 ## 🚀 Key Features
 * **Advanced Preprocessing:** Standardization to the 10-20 channel system.
