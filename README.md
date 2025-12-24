@@ -27,7 +27,7 @@ The system includes a full training pipeline tested on the [CHB-MIT Scalp EEG Da
 1.  **Clone the repository:**
     ```bash
     git clone https://github.com/OleksandrZadvornyi/eeg.git
-    cd your-repo-name
+    cd eeg
     ```
 
 2.  **Install dependencies:**
